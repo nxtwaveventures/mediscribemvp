@@ -97,15 +97,12 @@ function App() {
         recognitionRef.current.lang = 'en-US';
 
         recognitionRef.current.onresult = (event) => {
-            let interimTranscript = '';
             let finalTranscript = '';
 
             for (let i = event.resultIndex; i < event.results.length; i++) {
                 const transcript = event.results[i][0].transcript;
                 if (event.results[i].isFinal) {
                     finalTranscript += transcript + ' ';
-                } else {
-                    interimTranscript += transcript;
                 }
             }
 
@@ -256,8 +253,8 @@ function App() {
                         <button
                             onClick={toggleDemoMode}
                             className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${isDemo
-                                    ? 'bg-yellow-500 text-white'
-                                    : 'bg-green-500 text-white'
+                                ? 'bg-yellow-500 text-white'
+                                : 'bg-green-500 text-white'
                                 }`}
                         >
                             {isDemo ? 'Demo Mode' : 'Live Audio Mode'}
