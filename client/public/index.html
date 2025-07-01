@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description"
+        content="MediScribe - Real-time AI-powered medical transcription for healthcare professionals" />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    <title>MediScribe - Medical Transcription MVP</title>
+
+    <!-- Medical-themed styling -->
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+                'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+                sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .medical-gradient {
+            background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+        }
+
+        .pulse-animation {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+    </style>
+</head>
+
+<body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+
+    <!-- Medical-themed background elements -->
+    <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: -1;">
+        <div
+            style="position: absolute; top: 10%; left: 10%; width: 20px; height: 20px; background: rgba(255,255,255,0.1); border-radius: 50%; animation: pulse 3s infinite;">
+        </div>
+        <div
+            style="position: absolute; top: 60%; right: 15%; width: 15px; height: 15px; background: rgba(255,255,255,0.08); border-radius: 50%; animation: pulse 4s infinite;">
+        </div>
+        <div
+            style="position: absolute; bottom: 20%; left: 20%; width: 25px; height: 25px; background: rgba(255,255,255,0.06); border-radius: 50%; animation: pulse 5s infinite;">
+        </div>
+    </div>
+</body>
+
+</html>

@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Medical-themed custom styles */
+@layer base {
+    body {
+        @apply bg-gradient-to-br from-blue-600 to-purple-700;
+    }
+}
+
+@layer components {
+    .medical-card {
+        @apply bg-white rounded-xl shadow-2xl border border-gray-200 p-6;
+    }
+
+    .medical-button {
+        @apply bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl;
+    }
+
+    .medical-button-secondary {
+        @apply bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-3 px-6 rounded-lg transition-all duration-200;
+    }
+
+    .medical-input {
+        @apply w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+    }
+
+    .transcription-box {
+        @apply bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-4 min-h-[200px] font-mono text-sm;
+    }
+
+    .soap-notes {
+        @apply bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3;
+    }
+
+    .medical-badge {
+        @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800;
+    }
+
+    .recording-indicator {
+        @apply animate-pulse bg-red-500 text-white px-3 py-1 rounded-full text-sm font-medium;
+    }
+
+    .confidence-bar {
+        @apply w-full bg-gray-200 rounded-full h-2.5;
+    }
+
+    .confidence-fill {
+        @apply bg-green-600 h-2.5 rounded-full transition-all duration-300;
+    }
+}
+
+@layer utilities {
+    .animate-heartbeat {
+        animation: heartbeat 1.5s ease-in-out infinite;
+    }
+
+    @keyframes heartbeat {
+        0% {
+            transform: scale(1);
+        }
+
+        50% {
+            transform: scale(1.1);
+        }
+
+        100% {
+            transform: scale(1);
+        }
+    }
+
+    .medical-gradient {
+        background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+    }
+
+    .glass-effect {
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+}
