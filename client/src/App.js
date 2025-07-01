@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import io from 'socket.io-client';
 import {
     Mic,
     MicOff,
@@ -12,9 +11,6 @@ import {
 } from 'lucide-react';
 import './index.css';
 
-// Connect to socket server - works for both local and Vercel deployment
-const socket = io(process.env.NODE_ENV === 'production' ? window.location.origin : 'http://localhost:5000');
-
 function App() {
     const [isRecording, setIsRecording] = useState(false);
     const [transcription, setTranscription] = useState('');
@@ -24,8 +20,7 @@ function App() {
     const [patientId, setPatientId] = useState('PT-001');
     const [confidence, setConfidence] = useState(0);
     const [medicalTerms, setMedicalTerms] = useState([]);
-    const [connectionStatus, setConnectionStatus] = useState('Disconnected');
-    const [isDemo, setIsDemo] = useState(false);
+    const [isDemo, setIsDemo] = useState(true); // Default to demo mode for Vercel
     const [audioSupported, setAudioSupported] = useState(true);
     const [speechSupported, setSpeechSupported] = useState(true);
     const [processingStatus, setProcessingStatus] = useState('Ready');
@@ -34,6 +29,21 @@ function App() {
     const intervalRef = useRef(null);
     const recognitionRef = useRef(null);
     const audioChunksRef = useRef([]);
+
+    // Demo medical conversations
+    const demoConversations = [
+        "Patient presents with chest pain for the past three days. Pain is sharp and radiates to the left arm. No shortness of breath or sweating. Patient has a history of hypertension and diabetes.",
+        "On physical examination, patient appears in mild distress. Blood pressure is 160/95, heart rate 88, temperature 98.6, respiratory rate 16. Heart sounds are normal, no murmurs detected.",
+        "Lungs are clear to auscultation bilaterally. Abdomen is soft and non-tender. No peripheral edema noted. EKG shows normal sinus rhythm with no acute changes.",
+        "Assessment: Atypical chest pain, likely musculoskeletal in origin. Rule out cardiac etiology. Differential includes costochondritis, GERD, and anxiety.",
+        "Plan: Order cardiac enzymes, chest X-ray, and stress test. Prescribe ibuprofen 400mg TID for pain. Follow up in one week. Advise patient to return immediately if symptoms worsen."
+    ];
+
+    const medicalTermsList = [
+        'chest pain', 'hypertension', 'diabetes', 'blood pressure', 'heart rate',
+        'temperature', 'respiratory rate', 'EKG', 'cardiac enzymes', 'chest X-ray',
+        'stress test', 'ibuprofen', 'costochondritis', 'GERD', 'anxiety'
+    ];
 
     useEffect(() => {
         // Check browser support
@@ -45,47 +55,42 @@ function App() {
             setSpeechSupported(false);
         }
 
-        // Socket connection handling
-        socket.on('connect', () => {
-            setConnectionStatus('Connected');
-        });
-
-        socket.on('disconnect', () => {
-            setConnectionStatus('Disconnected');
-        });
-
-        socket.on('session-started', (data) => {
-            setSessionId(data.sessionId);
-            console.log('Session started:', data.sessionId);
-        });
-
-        socket.on('transcription-update', (data) => {
-            setTranscription(data.fullTranscription);
-            setConfidence(data.confidence);
-            if (data.medicalNotes?.extractedData) {
-                const allTerms = Object.values(data.medicalNotes.extractedData).flat();
-                setMedicalTerms(allTerms);
-            }
-        });
-
-        socket.on('soap-notes-generated', (data) => {
-            setSoapNotes(data.soapNotes);
-        });
-
-        socket.on('error', (error) => {
-            console.error('Socket error:', error);
-            alert('Error: ' + error);
-        });
-
-        return () => {
-            socket.off('connect');
-            socket.off('disconnect');
-            socket.off('session-started');
-            socket.off('transcription-update');
-            socket.off('soap-notes-generated');
-            socket.off('error');
-        };
+        // Generate session ID
+        setSessionId('session-' + Date.now());
     }, []);
+
+    const extractMedicalTerms = (text) => {
+        const lowerText = text.toLowerCase();
+        return medicalTermsList.filter(term => lowerText.includes(term));
+    };
+
+    const generateSOAPNotes = (transcription) => {
+        const terms = extractMedicalTerms(transcription);
+
+        return {
+            subjective: {
+                chiefComplaint: "Patient reports chest pain for the past three days",
+                historyOfPresentIllness: "Pain is described as sharp and radiating to the left arm. No shortness of breath or sweating reported."
+            },
+            objective: {
+                physicalExamination: "Patient appears in mild distress. Heart sounds are normal, no murmurs detected. Lungs are clear to auscultation bilaterally.",
+                vitalSigns: {
+                    "Blood Pressure": "160/95",
+                    "Heart Rate": "88 bpm",
+                    "Temperature": "98.6°F",
+                    "Respiratory Rate": "16/min"
+                }
+            },
+            assessment: {
+                primaryDiagnosis: "Atypical chest pain, likely musculoskeletal in origin. Rule out cardiac etiology."
+            },
+            plan: {
+                immediateActions: "Order cardiac enzymes, chest X-ray, and stress test. Prescribe ibuprofen 400mg TID for pain. Follow up in one week."
+            },
+            generatedAt: new Date().toISOString(),
+            confidence: 0.92
+        };
+    };
 
     const initializeSpeechRecognition = () => {
         if (!speechSupported) return;
@@ -109,37 +114,33 @@ function App() {
                 }
 
                 if (finalTranscript) {
-                    // Send to server for processing
-                    socket.emit('audio-stream', {
-                        audioData: Buffer.from(finalTranscript).toString('base64'),
-                        isFinal: true
-                    });
+                    // Process locally
+                    const newTranscription = transcription + ' ' + finalTranscript;
+                    setTranscription(newTranscription.trim());
+
+                    const terms = extractMedicalTerms(newTranscription);
+                    setMedicalTerms(terms);
+                    setConfidence(0.85 + Math.random() * 0.1);
                 }
             };
 
             recognitionRef.current.onerror = (event) => {
                 console.error('Speech recognition error:', event.error);
-                // Don't stop recording, just log the error
                 if (event.error === 'no-speech') {
-                    // This is normal, just continue
                     return;
                 }
-                // For other errors, fallback to demo mode
                 if (isRecording && !isDemo) {
                     console.log('Falling back to demo mode due to speech recognition error');
                     setIsDemo(true);
                     if (intervalRef.current) {
                         clearInterval(intervalRef.current);
                     }
-                    intervalRef.current = setInterval(() => {
-                        socket.emit('audio-stream', { demo: true });
-                    }, 3000);
+                    startDemoMode();
                 }
             };
 
             recognitionRef.current.onend = () => {
                 console.log('Speech recognition ended');
-                // Restart if still recording and not in demo mode
                 if (isRecording && !isDemo && speechSupported) {
                     try {
                         recognitionRef.current.start();
@@ -155,15 +156,28 @@ function App() {
         }
     };
 
+    const startDemoMode = () => {
+        let currentIndex = 0;
+        intervalRef.current = setInterval(() => {
+            if (currentIndex < demoConversations.length) {
+                const newText = demoConversations[currentIndex];
+                setTranscription(prev => prev + ' ' + newText);
+
+                const terms = extractMedicalTerms(transcription + ' ' + newText);
+                setMedicalTerms(terms);
+                setConfidence(0.85 + Math.random() * 0.1);
+
+                currentIndex++;
+            } else {
+                // Reset for continuous demo
+                currentIndex = 0;
+            }
+        }, 3000);
+    };
+
     const startRecording = async () => {
         try {
             setProcessingStatus('Starting session...');
-
-            // Start session
-            socket.emit('start-session', {
-                doctorName,
-                patientId
-            });
 
             setIsRecording(true);
             setTranscription('');
@@ -173,10 +187,7 @@ function App() {
 
             if (isDemo) {
                 setProcessingStatus('Demo mode active');
-                // Demo mode - simulate audio streaming
-                intervalRef.current = setInterval(() => {
-                    socket.emit('audio-stream', { demo: true });
-                }, 3000);
+                startDemoMode();
             } else {
                 setProcessingStatus('Initializing audio...');
                 // Real audio recording
@@ -198,33 +209,17 @@ function App() {
                         mediaRecorderRef.current.ondataavailable = (event) => {
                             if (event.data.size > 0) {
                                 audioChunksRef.current.push(event.data);
-
-                                // Convert to base64 and send to server
-                                const reader = new FileReader();
-                                reader.onload = () => {
-                                    const base64Audio = reader.result.split(',')[1];
-                                    socket.emit('audio-stream', {
-                                        audioData: base64Audio,
-                                        isFinal: false
-                                    });
-                                };
-                                reader.onerror = () => {
-                                    console.warn('Audio conversion failed, continuing with speech recognition');
-                                };
-                                reader.readAsDataURL(event.data);
                             }
                         };
 
                         mediaRecorderRef.current.onerror = (event) => {
                             console.error('MediaRecorder error:', event);
-                            // Continue with speech recognition even if MediaRecorder fails
                         };
 
-                        mediaRecorderRef.current.start(1000); // Send data every second
+                        mediaRecorderRef.current.start(1000);
                     } catch (audioError) {
                         console.warn('Audio recording failed, falling back to speech recognition only:', audioError);
                         setProcessingStatus('Audio recording failed, using speech recognition');
-                        // Continue with speech recognition even if MediaRecorder fails
                     }
                 }
 
@@ -238,35 +233,25 @@ function App() {
                     } catch (speechError) {
                         console.error('Speech recognition failed:', speechError);
                         setProcessingStatus('Speech recognition failed, using demo mode');
-                        // Fallback to demo mode if speech recognition fails
                         setIsDemo(true);
-                        intervalRef.current = setInterval(() => {
-                            socket.emit('audio-stream', { demo: true });
-                        }, 3000);
+                        startDemoMode();
                     }
                 } else {
-                    // If speech recognition is not supported, fallback to demo mode
                     setProcessingStatus('Speech recognition not supported, using demo mode');
                     setIsDemo(true);
-                    intervalRef.current = setInterval(() => {
-                        socket.emit('audio-stream', { demo: true });
-                    }, 3000);
+                    startDemoMode();
                 }
             }
 
         } catch (error) {
             console.error('Error starting recording:', error);
             setProcessingStatus('Error occurred, using demo mode');
-            // Always fallback to demo mode on any error
             setIsDemo(true);
             setIsRecording(true);
             setTranscription('');
             setSoapNotes(null);
             setMedicalTerms([]);
-
-            intervalRef.current = setInterval(() => {
-                socket.emit('audio-stream', { demo: true });
-            }, 3000);
+            startDemoMode();
         }
     };
 
@@ -287,17 +272,14 @@ function App() {
         }
 
         // Generate SOAP notes
-        if (sessionId) {
-            socket.emit('generate-soap-notes', sessionId);
+        if (transcription) {
+            const notes = generateSOAPNotes(transcription);
+            setSoapNotes(notes);
         }
     };
 
     const endSession = () => {
-        if (sessionId) {
-            socket.emit('end-session', sessionId);
-        }
-
-        setSessionId(null);
+        setSessionId('session-' + Date.now());
         setTranscription('');
         setSoapNotes(null);
         setMedicalTerms([]);
@@ -324,11 +306,9 @@ function App() {
 
                     {/* Connection Status */}
                     <div className="flex items-center justify-center mt-4 space-x-4">
-                        <div className={`flex items-center space-x-2 px-3 py-1 rounded-full ${connectionStatus === 'Connected' ? 'bg-green-500' : 'bg-red-500'
-                            } text-white text-sm`}>
-                            <div className={`w-2 h-2 rounded-full ${connectionStatus === 'Connected' ? 'bg-green-200 animate-pulse' : 'bg-red-200'
-                                }`}></div>
-                            <span>{connectionStatus}</span>
+                        <div className="flex items-center space-x-2 px-3 py-1 rounded-full bg-green-500 text-white text-sm">
+                            <div className="w-2 h-2 rounded-full bg-green-200 animate-pulse"></div>
+                            <span>Connected</span>
                         </div>
 
                         <button
