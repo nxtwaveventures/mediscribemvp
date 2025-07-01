@@ -3,12 +3,9 @@ import io from 'socket.io-client';
 import {
     Mic,
     MicOff,
-    Play,
-    Pause,
     FileText,
     Activity,
     Users,
-    Clock,
     CheckCircle,
     AlertCircle,
     Stethoscope
@@ -28,9 +25,8 @@ function App() {
     const [confidence, setConfidence] = useState(0);
     const [medicalTerms, setMedicalTerms] = useState([]);
     const [connectionStatus, setConnectionStatus] = useState('Disconnected');
-    const [isDemo, setIsDemo] = useState(true);
+    const [isDemo] = useState(true);
 
-    const audioRef = useRef(null);
     const mediaRecorderRef = useRef(null);
     const intervalRef = useRef(null);
 
