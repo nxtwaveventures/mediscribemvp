@@ -28,6 +28,7 @@ function App() {
     const [isDemo, setIsDemo] = useState(false);
     const [audioSupported, setAudioSupported] = useState(true);
     const [speechSupported, setSpeechSupported] = useState(true);
+    const [processingStatus, setProcessingStatus] = useState('Ready');
 
     const mediaRecorderRef = useRef(null);
     const intervalRef = useRef(null);
@@ -89,39 +90,75 @@ function App() {
     const initializeSpeechRecognition = () => {
         if (!speechSupported) return;
 
-        const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
-        recognitionRef.current = new SpeechRecognition();
+        try {
+            const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
+            recognitionRef.current = new SpeechRecognition();
 
-        recognitionRef.current.continuous = true;
-        recognitionRef.current.interimResults = true;
-        recognitionRef.current.lang = 'en-US';
+            recognitionRef.current.continuous = true;
+            recognitionRef.current.interimResults = true;
+            recognitionRef.current.lang = 'en-US';
 
-        recognitionRef.current.onresult = (event) => {
-            let finalTranscript = '';
+            recognitionRef.current.onresult = (event) => {
+                let finalTranscript = '';
 
-            for (let i = event.resultIndex; i < event.results.length; i++) {
-                const transcript = event.results[i][0].transcript;
-                if (event.results[i].isFinal) {
-                    finalTranscript += transcript + ' ';
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript + ' ';
+                    }
                 }
-            }
 
-            if (finalTranscript) {
-                // Send to server for processing
-                socket.emit('audio-stream', {
-                    audioData: Buffer.from(finalTranscript).toString('base64'),
-                    isFinal: true
-                });
-            }
-        };
+                if (finalTranscript) {
+                    // Send to server for processing
+                    socket.emit('audio-stream', {
+                        audioData: Buffer.from(finalTranscript).toString('base64'),
+                        isFinal: true
+                    });
+                }
+            };
 
-        recognitionRef.current.onerror = (event) => {
-            console.error('Speech recognition error:', event.error);
-        };
+            recognitionRef.current.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                // Don't stop recording, just log the error
+                if (event.error === 'no-speech') {
+                    // This is normal, just continue
+                    return;
+                }
+                // For other errors, fallback to demo mode
+                if (isRecording && !isDemo) {
+                    console.log('Falling back to demo mode due to speech recognition error');
+                    setIsDemo(true);
+                    if (intervalRef.current) {
+                        clearInterval(intervalRef.current);
+                    }
+                    intervalRef.current = setInterval(() => {
+                        socket.emit('audio-stream', { demo: true });
+                    }, 3000);
+                }
+            };
+
+            recognitionRef.current.onend = () => {
+                console.log('Speech recognition ended');
+                // Restart if still recording and not in demo mode
+                if (isRecording && !isDemo && speechSupported) {
+                    try {
+                        recognitionRef.current.start();
+                    } catch (error) {
+                        console.error('Failed to restart speech recognition:', error);
+                    }
+                }
+            };
+
+        } catch (error) {
+            console.error('Failed to initialize speech recognition:', error);
+            throw error;
+        }
     };
 
     const startRecording = async () => {
         try {
+            setProcessingStatus('Starting session...');
+
             // Start session
             socket.emit('start-session', {
                 doctorName,
@@ -135,57 +172,101 @@ function App() {
             audioChunksRef.current = [];
 
             if (isDemo) {
+                setProcessingStatus('Demo mode active');
                 // Demo mode - simulate audio streaming
                 intervalRef.current = setInterval(() => {
                     socket.emit('audio-stream', { demo: true });
                 }, 3000);
             } else {
+                setProcessingStatus('Initializing audio...');
                 // Real audio recording
                 if (audioSupported) {
-                    const stream = await navigator.mediaDevices.getUserMedia({
-                        audio: {
-                            sampleRate: 16000,
-                            channelCount: 1,
-                            echoCancellation: true,
-                            noiseSuppression: true
-                        }
-                    });
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({
+                            audio: {
+                                sampleRate: 16000,
+                                channelCount: 1,
+                                echoCancellation: true,
+                                noiseSuppression: true
+                            }
+                        });
 
-                    mediaRecorderRef.current = new MediaRecorder(stream, {
-                        mimeType: 'audio/webm;codecs=opus'
-                    });
+                        mediaRecorderRef.current = new MediaRecorder(stream, {
+                            mimeType: 'audio/webm;codecs=opus'
+                        });
 
-                    mediaRecorderRef.current.ondataavailable = (event) => {
-                        if (event.data.size > 0) {
-                            audioChunksRef.current.push(event.data);
+                        mediaRecorderRef.current.ondataavailable = (event) => {
+                            if (event.data.size > 0) {
+                                audioChunksRef.current.push(event.data);
 
-                            // Convert to base64 and send to server
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                                const base64Audio = reader.result.split(',')[1];
-                                socket.emit('audio-stream', {
-                                    audioData: base64Audio,
-                                    isFinal: false
-                                });
-                            };
-                            reader.readAsDataURL(event.data);
-                        }
-                    };
+                                // Convert to base64 and send to server
+                                const reader = new FileReader();
+                                reader.onload = () => {
+                                    const base64Audio = reader.result.split(',')[1];
+                                    socket.emit('audio-stream', {
+                                        audioData: base64Audio,
+                                        isFinal: false
+                                    });
+                                };
+                                reader.onerror = () => {
+                                    console.warn('Audio conversion failed, continuing with speech recognition');
+                                };
+                                reader.readAsDataURL(event.data);
+                            }
+                        };
 
-                    mediaRecorderRef.current.start(1000); // Send data every second
+                        mediaRecorderRef.current.onerror = (event) => {
+                            console.error('MediaRecorder error:', event);
+                            // Continue with speech recognition even if MediaRecorder fails
+                        };
+
+                        mediaRecorderRef.current.start(1000); // Send data every second
+                    } catch (audioError) {
+                        console.warn('Audio recording failed, falling back to speech recognition only:', audioError);
+                        setProcessingStatus('Audio recording failed, using speech recognition');
+                        // Continue with speech recognition even if MediaRecorder fails
+                    }
                 }
 
                 // Start speech recognition for real-time transcription
                 if (speechSupported) {
-                    initializeSpeechRecognition();
-                    recognitionRef.current.start();
+                    try {
+                        setProcessingStatus('Starting speech recognition...');
+                        initializeSpeechRecognition();
+                        recognitionRef.current.start();
+                        setProcessingStatus('Live audio mode active');
+                    } catch (speechError) {
+                        console.error('Speech recognition failed:', speechError);
+                        setProcessingStatus('Speech recognition failed, using demo mode');
+                        // Fallback to demo mode if speech recognition fails
+                        setIsDemo(true);
+                        intervalRef.current = setInterval(() => {
+                            socket.emit('audio-stream', { demo: true });
+                        }, 3000);
+                    }
+                } else {
+                    // If speech recognition is not supported, fallback to demo mode
+                    setProcessingStatus('Speech recognition not supported, using demo mode');
+                    setIsDemo(true);
+                    intervalRef.current = setInterval(() => {
+                        socket.emit('audio-stream', { demo: true });
+                    }, 3000);
                 }
             }
 
         } catch (error) {
             console.error('Error starting recording:', error);
-            alert('Failed to start recording: ' + error.message);
-            setIsDemo(true); // Fallback to demo mode
+            setProcessingStatus('Error occurred, using demo mode');
+            // Always fallback to demo mode on any error
+            setIsDemo(true);
+            setIsRecording(true);
+            setTranscription('');
+            setSoapNotes(null);
+            setMedicalTerms([]);
+
+            intervalRef.current = setInterval(() => {
+                socket.emit('audio-stream', { demo: true });
+            }, 3000);
         }
     };
 
@@ -368,6 +449,10 @@ function App() {
                                 <div className="recording-indicator flex items-center space-x-2">
                                     <div className="w-3 h-3 bg-white rounded-full animate-pulse"></div>
                                     <span>Recording in Progress</span>
+                                </div>
+
+                                <div className="text-sm text-gray-600">
+                                    Status: {processingStatus}
                                 </div>
 
                                 {confidence > 0 && (
