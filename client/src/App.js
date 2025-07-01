@@ -66,7 +66,7 @@ function App() {
 
     const generateSOAPNotes = (transcription) => {
         // Extract medical terms for processing (used for confidence calculation)
-        const extractedTerms = extractMedicalTerms(transcription);
+        // const extractedTerms = extractMedicalTerms(transcription); // Removed to fix build error
 
         return {
             subjective: {
