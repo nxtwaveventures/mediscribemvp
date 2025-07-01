@@ -25,12 +25,25 @@ function App() {
     const [confidence, setConfidence] = useState(0);
     const [medicalTerms, setMedicalTerms] = useState([]);
     const [connectionStatus, setConnectionStatus] = useState('Disconnected');
-    const [isDemo] = useState(true);
+    const [isDemo, setIsDemo] = useState(false);
+    const [audioSupported, setAudioSupported] = useState(true);
+    const [speechSupported, setSpeechSupported] = useState(true);
 
     const mediaRecorderRef = useRef(null);
     const intervalRef = useRef(null);
+    const recognitionRef = useRef(null);
+    const audioChunksRef = useRef([]);
 
     useEffect(() => {
+        // Check browser support
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            setAudioSupported(false);
+        }
+
+        if (!window.webkitSpeechRecognition && !window.SpeechRecognition) {
+            setSpeechSupported(false);
+        }
+
         // Socket connection handling
         socket.on('connect', () => {
             setConnectionStatus('Connected');
@@ -73,6 +86,43 @@ function App() {
         };
     }, []);
 
+    const initializeSpeechRecognition = () => {
+        if (!speechSupported) return;
+
+        const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
+        recognitionRef.current = new SpeechRecognition();
+
+        recognitionRef.current.continuous = true;
+        recognitionRef.current.interimResults = true;
+        recognitionRef.current.lang = 'en-US';
+
+        recognitionRef.current.onresult = (event) => {
+            let interimTranscript = '';
+            let finalTranscript = '';
+
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const transcript = event.results[i][0].transcript;
+                if (event.results[i].isFinal) {
+                    finalTranscript += transcript + ' ';
+                } else {
+                    interimTranscript += transcript;
+                }
+            }
+
+            if (finalTranscript) {
+                // Send to server for processing
+                socket.emit('audio-stream', {
+                    audioData: Buffer.from(finalTranscript).toString('base64'),
+                    isFinal: true
+                });
+            }
+        };
+
+        recognitionRef.current.onerror = (event) => {
+            console.error('Speech recognition error:', event.error);
+        };
+    };
+
     const startRecording = async () => {
         try {
             // Start session
@@ -85,29 +135,60 @@ function App() {
             setTranscription('');
             setSoapNotes(null);
             setMedicalTerms([]);
+            audioChunksRef.current = [];
 
             if (isDemo) {
                 // Demo mode - simulate audio streaming
                 intervalRef.current = setInterval(() => {
                     socket.emit('audio-stream', { demo: true });
-                }, 2000);
+                }, 3000);
             } else {
-                // Real audio recording (future implementation)
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                mediaRecorderRef.current = new MediaRecorder(stream);
+                // Real audio recording
+                if (audioSupported) {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            sampleRate: 16000,
+                            channelCount: 1,
+                            echoCancellation: true,
+                            noiseSuppression: true
+                        }
+                    });
 
-                mediaRecorderRef.current.ondataavailable = (event) => {
-                    if (event.data.size > 0) {
-                        socket.emit('audio-stream', event.data);
-                    }
-                };
+                    mediaRecorderRef.current = new MediaRecorder(stream, {
+                        mimeType: 'audio/webm;codecs=opus'
+                    });
 
-                mediaRecorderRef.current.start(1000); // Send data every second
+                    mediaRecorderRef.current.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                            audioChunksRef.current.push(event.data);
+
+                            // Convert to base64 and send to server
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                                const base64Audio = reader.result.split(',')[1];
+                                socket.emit('audio-stream', {
+                                    audioData: base64Audio,
+                                    isFinal: false
+                                });
+                            };
+                            reader.readAsDataURL(event.data);
+                        }
+                    };
+
+                    mediaRecorderRef.current.start(1000); // Send data every second
+                }
+
+                // Start speech recognition for real-time transcription
+                if (speechSupported) {
+                    initializeSpeechRecognition();
+                    recognitionRef.current.start();
+                }
             }
 
         } catch (error) {
             console.error('Error starting recording:', error);
             alert('Failed to start recording: ' + error.message);
+            setIsDemo(true); // Fallback to demo mode
         }
     };
 
@@ -118,8 +199,13 @@ function App() {
             clearInterval(intervalRef.current);
         }
 
-        if (mediaRecorderRef.current) {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
             mediaRecorderRef.current.stop();
+            mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+        }
+
+        if (recognitionRef.current) {
+            recognitionRef.current.stop();
         }
 
         // Generate SOAP notes
@@ -138,6 +224,13 @@ function App() {
         setSoapNotes(null);
         setMedicalTerms([]);
         setConfidence(0);
+    };
+
+    const toggleDemoMode = () => {
+        setIsDemo(!isDemo);
+        if (isRecording) {
+            stopRecording();
+        }
     };
 
     return (
@@ -160,10 +253,31 @@ function App() {
                             <span>{connectionStatus}</span>
                         </div>
 
-                        <div className="bg-white bg-opacity-20 text-white px-3 py-1 rounded-full text-sm">
-                            Demo Mode: {isDemo ? 'ON' : 'OFF'}
-                        </div>
+                        <button
+                            onClick={toggleDemoMode}
+                            className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${isDemo
+                                    ? 'bg-yellow-500 text-white'
+                                    : 'bg-green-500 text-white'
+                                }`}
+                        >
+                            {isDemo ? 'Demo Mode' : 'Live Audio Mode'}
+                        </button>
                     </div>
+
+                    {/* Browser Support Warnings */}
+                    {!audioSupported && (
+                        <div className="mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+                            <AlertCircle className="h-5 w-5 inline mr-2" />
+                            Audio recording not supported in this browser. Using demo mode.
+                        </div>
+                    )}
+
+                    {!speechSupported && (
+                        <div className="mt-2 p-3 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded-lg">
+                            <AlertCircle className="h-5 w-5 inline mr-2" />
+                            Speech recognition not supported. Using audio recording only.
+                        </div>
+                    )}
                 </div>
 
                 {/* Session Info */}
@@ -358,44 +472,41 @@ function App() {
                     </div>
                 </div>
 
-                {/* Demo Instructions */}
+                {/* Instructions */}
                 <div className="medical-card mt-8">
-                    <h3 className="text-xl font-bold text-gray-800 mb-4">MVP Demo Instructions</h3>
+                    <h3 className="text-xl font-bold text-gray-800 mb-4">How to Use</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
-                            <h4 className="font-semibold text-blue-800 mb-2">How to Use:</h4>
+                            <h4 className="font-semibold text-blue-800 mb-2">Live Audio Mode:</h4>
                             <ol className="list-decimal list-inside space-y-1 text-sm text-gray-700">
-                                <li>Enter doctor name and patient ID</li>
-                                <li>Click "Start Recording" to begin session</li>
-                                <li>Watch real-time transcription appear (simulated medical conversation)</li>
-                                <li>Medical terms are automatically detected and highlighted</li>
-                                <li>Click "Stop Recording" to generate SOAP notes</li>
-                                <li>Review formatted clinical documentation</li>
+                                <li>Allow microphone access when prompted</li>
+                                <li>Speak clearly into your microphone</li>
+                                <li>Watch real-time transcription appear</li>
+                                <li>Medical terms are automatically detected</li>
+                                <li>Stop recording to generate SOAP notes</li>
                             </ol>
                         </div>
 
                         <div>
-                            <h4 className="font-semibold text-blue-800 mb-2">MVP Features Demonstrated:</h4>
-                            <ul className="list-disc list-inside space-y-1 text-sm text-gray-700">
-                                <li>Real-time audio processing simulation</li>
-                                <li>Medical terminology recognition</li>
-                                <li>Automatic SOAP note formatting</li>
-                                <li>Confidence scoring for transcriptions</li>
-                                <li>Session management and tracking</li>
-                                <li>Professional medical interface</li>
-                            </ul>
+                            <h4 className="font-semibold text-blue-800 mb-2">Demo Mode:</h4>
+                            <ol className="list-decimal list-inside space-y-1 text-sm text-gray-700">
+                                <li>Click "Start Recording" to begin</li>
+                                <li>Watch simulated medical conversation</li>
+                                <li>See real-time transcription updates</li>
+                                <li>Medical terms are highlighted</li>
+                                <li>Generate SOAP notes automatically</li>
+                            </ol>
                         </div>
                     </div>
 
-                    <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                         <div className="flex items-start space-x-2">
-                            <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
+                            <Activity className="h-5 w-5 text-blue-600 mt-0.5" />
                             <div>
-                                <h5 className="font-semibold text-yellow-800">MVP Note:</h5>
-                                <p className="text-sm text-yellow-700 mt-1">
-                                    This demo simulates real-time transcription with sample medical conversations.
-                                    In the full product, this would integrate with actual audio input, EMR systems,
-                                    and advanced AI models for production-quality medical transcription.
+                                <h5 className="font-semibold text-blue-800">Real Audio Processing:</h5>
+                                <p className="text-sm text-blue-700 mt-1">
+                                    This MVP now supports real audio recording and transcription using Web Speech API and MediaRecorder.
+                                    For production, integrate with OpenAI Whisper API for higher accuracy.
                                 </p>
                             </div>
                         </div>

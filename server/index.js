@@ -2,115 +2,133 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
-const multer = require('multer');
-require('dotenv').config();
+const path = require('path');
+const fs = require('fs');
+const { v4: uuidv4 } = require('uuid');
+
+// Import our utilities
+const TranscriptionEngine = require('./utils/transcriptionEngine');
+const MedicalFormatter = require('./utils/medicalFormatter');
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
     cors: {
-        origin: "http://localhost:3000",
+        origin: "*",
         methods: ["GET", "POST"]
     }
 });
 
 // Middleware
 app.use(cors());
-app.use(express.json());
-app.use(express.static('public'));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.static(path.join(__dirname, '../client/build')));
 
-// Medical terminology and formatting utilities
-const MedicalFormatter = require('./utils/medicalFormatter');
-const TranscriptionEngine = require('./utils/transcriptionEngine');
-
-const medicalFormatter = new MedicalFormatter();
+// Initialize our engines
 const transcriptionEngine = new TranscriptionEngine();
+const medicalFormatter = new MedicalFormatter();
 
 // Store active sessions
 const activeSessions = new Map();
 
-// Socket.io connection handling
-io.on('connection', (socket) => {
-    console.log('Doctor connected:', socket.id);
+// Serve React app
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, '../client/build/index.html'));
+});
 
-    // Start new transcription session
-    socket.on('start-session', (sessionData) => {
-        const sessionId = Date.now().toString();
-        activeSessions.set(sessionId, {
-            socketId: socket.id,
-            doctorName: sessionData.doctorName,
-            patientId: sessionData.patientId,
+// Socket connection handling
+io.on('connection', (socket) => {
+    console.log('Client connected:', socket.id);
+
+    // Start a new session
+    socket.on('start-session', (data) => {
+        const sessionId = uuidv4();
+        const session = {
+            id: sessionId,
+            doctorName: data.doctorName,
+            patientId: data.patientId,
             startTime: new Date(),
+            audioChunks: [],
             transcription: '',
-            medicalNotes: {}
-        });
+            isActive: true
+        };
+
+        activeSessions.set(sessionId, session);
+        socket.sessionId = sessionId;
 
         socket.emit('session-started', { sessionId });
-        console.log(`Session started: ${sessionId} for Dr. ${sessionData.doctorName}`);
+        console.log('Session started:', sessionId);
     });
 
-    // Handle real-time audio streaming
-    socket.on('audio-stream', async (audioData) => {
+    // Handle real audio streaming
+    socket.on('audio-stream', async (data) => {
+        if (!socket.sessionId || !activeSessions.has(socket.sessionId)) {
+            return;
+        }
+
+        const session = activeSessions.get(socket.sessionId);
+
         try {
-            // Find session for this socket
-            const session = Array.from(activeSessions.values())
-                .find(s => s.socketId === socket.id);
+            // Handle real audio data
+            if (data.audioData) {
+                // Convert base64 audio to buffer
+                const audioBuffer = Buffer.from(data.audioData, 'base64');
+                session.audioChunks.push(audioBuffer);
 
-            if (!session) {
-                socket.emit('error', 'No active session found');
-                return;
+                // Process audio in chunks for real-time transcription
+                const transcription = await transcriptionEngine.processRealAudio(audioBuffer);
+
+                if (transcription) {
+                    session.transcription += ' ' + transcription;
+
+                    // Extract medical terms
+                    const medicalNotes = medicalFormatter.extractMedicalTerms(session.transcription);
+
+                    // Send real-time updates
+                    socket.emit('transcription-update', {
+                        fullTranscription: session.transcription.trim(),
+                        confidence: transcriptionEngine.getConfidence(),
+                        medicalNotes: medicalNotes
+                    });
+                }
             }
+            // Handle demo mode (fallback)
+            else if (data.demo) {
+                const demoTranscription = transcriptionEngine.processDemoAudio();
+                session.transcription += ' ' + demoTranscription;
 
-            // Process audio through transcription engine
-            const transcriptionResult = await transcriptionEngine.processAudio(audioData);
+                const medicalNotes = medicalFormatter.extractMedicalTerms(session.transcription);
 
-            if (transcriptionResult.text) {
-                // Update session transcription
-                session.transcription += transcriptionResult.text + ' ';
-
-                // Format medical notes in real-time
-                const medicalNotes = await medicalFormatter.formatTranscription(
-                    session.transcription
-                );
-
-                session.medicalNotes = medicalNotes;
-
-                // Send real-time updates to frontend
                 socket.emit('transcription-update', {
-                    text: transcriptionResult.text,
-                    fullTranscription: session.transcription,
-                    medicalNotes: medicalNotes,
-                    confidence: transcriptionResult.confidence
+                    fullTranscription: session.transcription.trim(),
+                    confidence: transcriptionEngine.getConfidence(),
+                    medicalNotes: medicalNotes
                 });
             }
         } catch (error) {
             console.error('Audio processing error:', error);
-            socket.emit('error', 'Failed to process audio');
+            socket.emit('error', 'Audio processing failed');
         }
     });
 
-    // Generate final SOAP notes
+    // Generate SOAP notes
     socket.on('generate-soap-notes', async (sessionId) => {
+        const session = activeSessions.get(sessionId);
+        if (!session) {
+            socket.emit('error', 'Session not found');
+            return;
+        }
+
         try {
-            const session = activeSessions.get(sessionId);
-            if (!session) {
-                socket.emit('error', 'Session not found');
-                return;
-            }
-
-            const soapNotes = await medicalFormatter.generateSOAPNotes(
-                session.transcription,
-                session.medicalNotes
-            );
-
-            socket.emit('soap-notes-generated', {
-                sessionId,
-                soapNotes,
-                session: session
+            const soapNotes = await medicalFormatter.generateSOAPNotes(session.transcription, {
+                doctorName: session.doctorName,
+                patientId: session.patientId,
+                sessionId: sessionId
             });
 
+            socket.emit('soap-notes-generated', { soapNotes });
         } catch (error) {
-            console.error('SOAP generation error:', error);
+            console.error('SOAP notes generation error:', error);
             socket.emit('error', 'Failed to generate SOAP notes');
         }
     });
@@ -119,32 +137,48 @@ io.on('connection', (socket) => {
     socket.on('end-session', (sessionId) => {
         const session = activeSessions.get(sessionId);
         if (session) {
+            session.isActive = false;
             session.endTime = new Date();
-            console.log(`Session ended: ${sessionId}`);
-
-            // In a real system, save to hospital database here
-            socket.emit('session-ended', {
-                sessionId,
-                duration: session.endTime - session.startTime,
-                summary: session.medicalNotes
-            });
-
             activeSessions.delete(sessionId);
+            console.log('Session ended:', sessionId);
         }
     });
 
+    // Handle disconnection
     socket.on('disconnect', () => {
-        console.log('Doctor disconnected:', socket.id);
-        // Clean up any active sessions for this socket
-        for (const [sessionId, session] of activeSessions.entries()) {
-            if (session.socketId === socket.id) {
-                activeSessions.delete(sessionId);
+        if (socket.sessionId) {
+            const session = activeSessions.get(socket.sessionId);
+            if (session) {
+                session.isActive = false;
+                session.endTime = new Date();
             }
         }
+        console.log('Client disconnected:', socket.id);
     });
 });
 
 // API Routes
+app.get('/api/sessions', (req, res) => {
+    const sessions = Array.from(activeSessions.values()).map(session => ({
+        id: session.id,
+        doctorName: session.doctorName,
+        patientId: session.patientId,
+        startTime: session.startTime,
+        isActive: session.isActive
+    }));
+    res.json(sessions);
+});
+
+app.get('/api/session/:id', (req, res) => {
+    const session = activeSessions.get(req.params.id);
+    if (session) {
+        res.json(session);
+    } else {
+        res.status(404).json({ error: 'Session not found' });
+    }
+});
+
+// Health check
 app.get('/api/health', (req, res) => {
     res.json({
         status: 'healthy',
@@ -153,39 +187,9 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-app.get('/api/sessions', (req, res) => {
-    const sessions = Array.from(activeSessions.entries()).map(([id, session]) => ({
-        sessionId: id,
-        doctorName: session.doctorName,
-        patientId: session.patientId,
-        startTime: session.startTime,
-        duration: new Date() - session.startTime
-    }));
-
-    res.json({ sessions });
-});
-
-// Demo endpoint for testing
-app.post('/api/demo-transcription', async (req, res) => {
-    try {
-        const { text } = req.body;
-        const medicalNotes = await medicalFormatter.formatTranscription(text);
-        const soapNotes = await medicalFormatter.generateSOAPNotes(text, medicalNotes);
-
-        res.json({
-            originalText: text,
-            medicalNotes,
-            soapNotes
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
 const PORT = process.env.PORT || 5000;
-
 server.listen(PORT, () => {
-    console.log(`🏥 MediScribe Server running on port ${PORT}`);
-    console.log(`📊 Dashboard: http://localhost:${PORT}`);
-    console.log(`🔗 WebSocket: ws://localhost:${PORT}`);
+    console.log(`🚀 MediScribe server running on port ${PORT}`);
+    console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
+    console.log(`🏥 Frontend: http://localhost:${PORT}`);
 }); 
