@@ -20,7 +20,7 @@ function App() {
     const [patientId, setPatientId] = useState('PT-001');
     const [confidence, setConfidence] = useState(0);
     const [medicalTerms, setMedicalTerms] = useState([]);
-    const [isDemo, setIsDemo] = useState(true); // Default to demo mode for Vercel
+    const [isDemo, setIsDemo] = useState(false); // Default to live audio mode
     const [audioSupported, setAudioSupported] = useState(true);
     const [speechSupported, setSpeechSupported] = useState(true);
     const [processingStatus, setProcessingStatus] = useState('Ready');
@@ -40,9 +40,31 @@ function App() {
     ];
 
     const medicalTermsList = [
-        'chest pain', 'hypertension', 'diabetes', 'blood pressure', 'heart rate',
-        'temperature', 'respiratory rate', 'EKG', 'cardiac enzymes', 'chest X-ray',
-        'stress test', 'ibuprofen', 'costochondritis', 'GERD', 'anxiety'
+        // Symptoms
+        'chest pain', 'headache', 'fever', 'shortness of breath', 'dyspnea', 'nausea', 'vomiting', 'dizziness',
+        'fatigue', 'weakness', 'cough', 'sore throat', 'abdominal pain', 'back pain', 'joint pain',
+
+        // Vital signs
+        'blood pressure', 'heart rate', 'temperature', 'respiratory rate', 'pulse', 'oxygen saturation',
+
+        // Medical conditions
+        'hypertension', 'diabetes', 'asthma', 'copd', 'heart disease', 'stroke', 'pneumonia', 'infection',
+
+        // Medications
+        'ibuprofen', 'aspirin', 'acetaminophen', 'antibiotics', 'insulin', 'metformin',
+
+        // Tests and procedures
+        'EKG', 'ECG', 'chest X-ray', 'cardiac enzymes', 'stress test', 'blood test', 'urine test',
+        'CT scan', 'MRI', 'ultrasound',
+
+        // Body systems
+        'cardiac', 'respiratory', 'gastrointestinal', 'neurological', 'musculoskeletal',
+
+        // Physical exam findings
+        'heart sounds', 'lung sounds', 'abdomen', 'tender', 'swelling', 'edema', 'murmur',
+
+        // Common medical terms
+        'acute', 'chronic', 'bilateral', 'unilateral', 'distress', 'stable', 'normal', 'abnormal'
     ];
 
     useEffect(() => {
@@ -65,69 +87,255 @@ function App() {
     };
 
     const generateSOAPNotes = (transcription) => {
-        // Extract medical terms for processing (used for confidence calculation)
-        // const extractedTerms = extractMedicalTerms(transcription); // Removed to fix build error
+        // Extract medical terms for processing
+        const extractedTerms = extractMedicalTerms(transcription);
+
+        // Analyze transcription to extract key information
+        const lowerTranscription = transcription.toLowerCase();
+
+        // Extract subjective information (patient complaints, history)
+        let subjective = {
+            chiefComplaint: "Patient presents with symptoms",
+            historyOfPresentIllness: "Details of current symptoms and timeline"
+        };
+
+        // Look for common complaint patterns with more specific extraction
+        if (lowerTranscription.includes('chest pain') || lowerTranscription.includes('chest discomfort')) {
+            subjective.chiefComplaint = "Patient reports chest pain";
+
+            // Extract specific details about chest pain
+            let painDetails = [];
+            if (lowerTranscription.includes('sharp')) painDetails.push('sharp');
+            if (lowerTranscription.includes('dull')) painDetails.push('dull');
+            if (lowerTranscription.includes('pressure')) painDetails.push('pressure-like');
+            if (lowerTranscription.includes('radiate') || lowerTranscription.includes('arm')) painDetails.push('radiating to left arm');
+            if (lowerTranscription.includes('shoulder')) painDetails.push('radiating to shoulder');
+            if (lowerTranscription.includes('jaw')) painDetails.push('radiating to jaw');
+
+            if (painDetails.length > 0) {
+                subjective.historyOfPresentIllness = `Chest pain described as ${painDetails.join(', ')}`;
+            } else {
+                subjective.historyOfPresentIllness = "Chest pain reported with varying characteristics";
+            }
+
+            // Add duration if mentioned
+            if (lowerTranscription.includes('days') || lowerTranscription.includes('hours')) {
+                const durationMatch = lowerTranscription.match(/(\d+)\s*(days?|hours?)/);
+                if (durationMatch) {
+                    subjective.historyOfPresentIllness += ` for ${durationMatch[1]} ${durationMatch[2]}`;
+                }
+            }
+        } else if (lowerTranscription.includes('headache') || lowerTranscription.includes('head pain')) {
+            subjective.chiefComplaint = "Patient reports headache";
+
+            let headacheDetails = [];
+            if (lowerTranscription.includes('migraine')) headacheDetails.push('migraine-type');
+            if (lowerTranscription.includes('tension')) headacheDetails.push('tension-type');
+            if (lowerTranscription.includes('throbbing')) headacheDetails.push('throbbing');
+            if (lowerTranscription.includes('pressure')) headacheDetails.push('pressure-like');
+
+            subjective.historyOfPresentIllness = headacheDetails.length > 0
+                ? `Headache described as ${headacheDetails.join(', ')}`
+                : "Headache described with associated symptoms";
+        } else if (lowerTranscription.includes('fever') || lowerTranscription.includes('temperature')) {
+            subjective.chiefComplaint = "Patient reports fever";
+            subjective.historyOfPresentIllness = "Fever with associated symptoms";
+        } else if (lowerTranscription.includes('shortness of breath') || lowerTranscription.includes('dyspnea')) {
+            subjective.chiefComplaint = "Patient reports shortness of breath";
+            subjective.historyOfPresentIllness = "Dyspnea with associated symptoms";
+        } else if (lowerTranscription.includes('abdominal pain') || lowerTranscription.includes('stomach pain')) {
+            subjective.chiefComplaint = "Patient reports abdominal pain";
+            subjective.historyOfPresentIllness = "Abdominal pain with associated symptoms";
+        } else if (lowerTranscription.includes('back pain')) {
+            subjective.chiefComplaint = "Patient reports back pain";
+            subjective.historyOfPresentIllness = "Back pain with associated symptoms";
+        }
+
+        // Extract objective information (exam findings, vitals)
+        let objective = {
+            physicalExamination: "Physical examination findings",
+            vitalSigns: {}
+        };
+
+        // Extract vital signs if mentioned with more patterns
+        const bpMatch = lowerTranscription.match(/(\d{2,3})\/(\d{2,3})/);
+        if (bpMatch) {
+            objective.vitalSigns["Blood Pressure"] = `${bpMatch[1]}/${bpMatch[2]}`;
+        }
+
+        const hrMatch = lowerTranscription.match(/(\d{2,3})\s*(?:bpm|heart rate|pulse)/);
+        if (hrMatch) {
+            objective.vitalSigns["Heart Rate"] = `${hrMatch[1]} bpm`;
+        }
+
+        const tempMatch = lowerTranscription.match(/(\d{2,3}\.\d)/);
+        if (tempMatch) {
+            objective.vitalSigns["Temperature"] = `${tempMatch[1]}°F`;
+        }
+
+        const rrMatch = lowerTranscription.match(/(\d{2,3})\s*(?:respiratory rate|breaths)/);
+        if (rrMatch) {
+            objective.vitalSigns["Respiratory Rate"] = `${rrMatch[1]}/min`;
+        }
+
+        // Extract physical exam findings with more detail
+        let examFindings = [];
+        if (lowerTranscription.includes('heart sounds') || lowerTranscription.includes('cardiac')) {
+            if (lowerTranscription.includes('normal')) {
+                examFindings.push("Heart sounds are normal");
+            } else if (lowerTranscription.includes('murmur')) {
+                examFindings.push("Cardiac murmur detected");
+            } else {
+                examFindings.push("Cardiac examination performed");
+            }
+        }
+
+        if (lowerTranscription.includes('lungs') || lowerTranscription.includes('respiratory')) {
+            if (lowerTranscription.includes('clear')) {
+                examFindings.push("Lungs are clear to auscultation");
+            } else if (lowerTranscription.includes('wheez')) {
+                examFindings.push("Wheezing detected on auscultation");
+            } else if (lowerTranscription.includes('crackl')) {
+                examFindings.push("Crackles detected on auscultation");
+            } else {
+                examFindings.push("Respiratory examination performed");
+            }
+        }
+
+        if (lowerTranscription.includes('abdomen') || lowerTranscription.includes('abdominal')) {
+            if (lowerTranscription.includes('tender')) {
+                examFindings.push("Abdomen is tender");
+            } else if (lowerTranscription.includes('soft')) {
+                examFindings.push("Abdomen is soft and non-tender");
+            } else {
+                examFindings.push("Abdominal examination performed");
+            }
+        }
+
+        if (lowerTranscription.includes('edema') || lowerTranscription.includes('swelling')) {
+            if (lowerTranscription.includes('no edema') || lowerTranscription.includes('no swelling')) {
+                examFindings.push("No peripheral edema noted");
+            } else {
+                examFindings.push("Edema/swelling noted");
+            }
+        }
+
+        objective.physicalExamination = examFindings.length > 0
+            ? examFindings.join('. ') + '.'
+            : "Physical examination findings";
+
+        // Generate assessment based on symptoms and findings
+        let assessment = {
+            primaryDiagnosis: "Assessment based on clinical presentation"
+        };
+
+        if (lowerTranscription.includes('chest pain') && (lowerTranscription.includes('cardiac') || lowerTranscription.includes('EKG'))) {
+            assessment.primaryDiagnosis = "Atypical chest pain, rule out cardiac etiology";
+        } else if (lowerTranscription.includes('chest pain')) {
+            assessment.primaryDiagnosis = "Chest pain, likely musculoskeletal in origin";
+        } else if (lowerTranscription.includes('headache')) {
+            assessment.primaryDiagnosis = "Headache, etiology to be determined";
+        } else if (lowerTranscription.includes('fever')) {
+            assessment.primaryDiagnosis = "Fever, possible infectious etiology";
+        } else if (lowerTranscription.includes('shortness of breath')) {
+            assessment.primaryDiagnosis = "Dyspnea, etiology to be determined";
+        } else if (lowerTranscription.includes('abdominal pain')) {
+            assessment.primaryDiagnosis = "Abdominal pain, etiology to be determined";
+        }
+
+        // Generate plan based on assessment with more specific recommendations
+        let plan = {
+            immediateActions: "Follow-up care and monitoring recommended"
+        };
+
+        if (lowerTranscription.includes('chest pain')) {
+            plan.immediateActions = "Order cardiac enzymes, chest X-ray, and stress test. Follow up in one week.";
+        } else if (lowerTranscription.includes('headache')) {
+            plan.immediateActions = "Monitor symptoms. Consider imaging if severe. Follow up as needed.";
+        } else if (lowerTranscription.includes('fever')) {
+            plan.immediateActions = "Monitor temperature. Consider infectious workup if persistent.";
+        } else if (lowerTranscription.includes('shortness of breath')) {
+            plan.immediateActions = "Monitor respiratory status. Consider pulmonary workup if persistent.";
+        } else if (lowerTranscription.includes('abdominal pain')) {
+            plan.immediateActions = "Monitor symptoms. Consider imaging if severe. Follow up as needed.";
+        }
+
+        // Calculate confidence based on medical terms found and transcription length
+        const confidence = Math.min(0.85 + (extractedTerms.length * 0.02) + (transcription.length * 0.001), 0.98);
 
         return {
-            subjective: {
-                chiefComplaint: "Patient reports chest pain for the past three days",
-                historyOfPresentIllness: "Pain is described as sharp and radiating to the left arm. No shortness of breath or sweating reported."
-            },
-            objective: {
-                physicalExamination: "Patient appears in mild distress. Heart sounds are normal, no murmurs detected. Lungs are clear to auscultation bilaterally.",
-                vitalSigns: {
-                    "Blood Pressure": "160/95",
-                    "Heart Rate": "88 bpm",
-                    "Temperature": "98.6°F",
-                    "Respiratory Rate": "16/min"
-                }
-            },
-            assessment: {
-                primaryDiagnosis: "Atypical chest pain, likely musculoskeletal in origin. Rule out cardiac etiology."
-            },
-            plan: {
-                immediateActions: "Order cardiac enzymes, chest X-ray, and stress test. Prescribe ibuprofen 400mg TID for pain. Follow up in one week."
-            },
+            subjective,
+            objective,
+            assessment,
+            plan,
             generatedAt: new Date().toISOString(),
-            confidence: 0.92
+            confidence: confidence,
+            medicalTermsFound: extractedTerms
         };
     };
 
     const initializeSpeechRecognition = () => {
-        if (!speechSupported) return;
+        if (!speechSupported) {
+            console.log('Speech recognition not supported in this browser');
+            return;
+        }
 
         try {
             const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
+            if (!SpeechRecognition) {
+                console.error('Speech recognition API not available');
+                setSpeechSupported(false);
+                return;
+            }
+
             recognitionRef.current = new SpeechRecognition();
+            console.log('Speech recognition initialized successfully');
 
             recognitionRef.current.continuous = true;
             recognitionRef.current.interimResults = true;
             recognitionRef.current.lang = 'en-US';
 
+            recognitionRef.current.onstart = () => {
+                console.log('Speech recognition started');
+                setProcessingStatus('Listening...');
+            };
+
             recognitionRef.current.onresult = (event) => {
                 let finalTranscript = '';
+                let interimTranscript = '';
 
                 for (let i = event.resultIndex; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
                     if (event.results[i].isFinal) {
                         finalTranscript += transcript + ' ';
+                    } else {
+                        interimTranscript += transcript;
                     }
                 }
 
                 if (finalTranscript) {
-                    // Process locally
+                    console.log('Final transcript:', finalTranscript);
                     const newTranscription = transcription + ' ' + finalTranscript;
                     setTranscription(newTranscription.trim());
 
                     const terms = extractMedicalTerms(newTranscription);
                     setMedicalTerms(terms);
                     setConfidence(0.85 + Math.random() * 0.1);
+
+                    // Generate SOAP notes in real-time
+                    const notes = generateSOAPNotes(newTranscription.trim());
+                    setSoapNotes(notes);
+                }
+
+                if (interimTranscript) {
+                    console.log('Interim transcript:', interimTranscript);
                 }
             };
 
             recognitionRef.current.onerror = (event) => {
                 console.error('Speech recognition error:', event.error);
                 if (event.error === 'no-speech') {
+                    console.log('No speech detected, continuing...');
                     return;
                 }
                 if (isRecording && !isDemo) {
@@ -144,6 +352,7 @@ function App() {
                 console.log('Speech recognition ended');
                 if (isRecording && !isDemo && speechSupported) {
                     try {
+                        console.log('Restarting speech recognition...');
                         recognitionRef.current.start();
                     } catch (error) {
                         console.error('Failed to restart speech recognition:', error);
@@ -153,6 +362,7 @@ function App() {
 
         } catch (error) {
             console.error('Failed to initialize speech recognition:', error);
+            setSpeechSupported(false);
             throw error;
         }
     };
@@ -162,11 +372,16 @@ function App() {
         intervalRef.current = setInterval(() => {
             if (currentIndex < demoConversations.length) {
                 const newText = demoConversations[currentIndex];
-                setTranscription(prev => prev + ' ' + newText);
+                const updatedTranscription = transcription + ' ' + newText;
+                setTranscription(updatedTranscription);
 
-                const terms = extractMedicalTerms(transcription + ' ' + newText);
+                const terms = extractMedicalTerms(updatedTranscription);
                 setMedicalTerms(terms);
                 setConfidence(0.85 + Math.random() * 0.1);
+
+                // Generate SOAP notes in real-time for demo mode too
+                const notes = generateSOAPNotes(updatedTranscription);
+                setSoapNotes(notes);
 
                 currentIndex++;
             } else {
@@ -524,6 +739,19 @@ function App() {
                                         <span>Generated: {new Date(soapNotes.generatedAt).toLocaleString()}</span>
                                         <span>Confidence: {Math.round(soapNotes.confidence * 100)}%</span>
                                     </div>
+
+                                    {soapNotes.medicalTermsFound && soapNotes.medicalTermsFound.length > 0 && (
+                                        <div className="mt-2 pt-2 border-t border-blue-100">
+                                            <span className="text-xs text-gray-500">Medical terms analyzed: </span>
+                                            <div className="flex flex-wrap gap-1 mt-1">
+                                                {soapNotes.medicalTermsFound.map((term, index) => (
+                                                    <span key={index} className="text-xs bg-blue-100 text-blue-800 px-1 rounded">
+                                                        {term}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         ) : (
