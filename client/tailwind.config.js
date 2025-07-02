@@ -36,6 +36,6 @@ module.exports = {
         },
     },
     plugins: [
-        require('@tailwindcss/forms'),
+        // Removed @tailwindcss/forms plugin to fix build error
     ],
 } 
